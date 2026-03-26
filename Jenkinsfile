@@ -1,25 +1,44 @@
+// Complete Jenkinsfile for Go project with SonarQube analysis
 pipeline {
     agent any
-    
-    tools {
-        go 'go-1.25.1'  // Configure this in Jenkins Global Tool Configuration
-    }
     
     environment {
         // SonarQube configuration
         SONAR_HOST_URL = 'http://localhost:9000'
-        SONAR_TOKEN = credentials('sonarqube-token')
         
         // Go environment
         GO111MODULE = 'on'
-        GOPATH = "${WORKSPACE}/go"
+        
+        // Project configuration
+        PROJECT_KEY = 'test-sonarqube'
+        PROJECT_NAME = 'Test SonarQube Go App'
     }
     
     stages {
-        stage('Checkout') {
+        stage('SCM Checkout') {
             steps {
-                // Replace with your actual repository
-                git url: 'https://github.com/yourusername/go-crud-app.git', branch: 'main'
+                checkout scm
+                echo "✅ Code checked out successfully"
+            }
+        }
+        
+        stage('Setup Go Environment') {
+            steps {
+                script {
+                    // Check if Go is available, if not install it
+                    def goVersion = sh(script: 'go version', returnStatus: true)
+                    if (goVersion != 0) {
+                        echo "⚠️ Go not found. Installing Go..."
+                        sh '''
+                            # Download and install Go
+                            wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
+                            sudo tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz
+                            export PATH=$PATH:/usr/local/go/bin
+                            echo "export PATH=\$PATH:/usr/local/go/bin" >> ~/.bashrc
+                        '''
+                    }
+                    sh 'go version'
+                }
             }
         }
         
@@ -35,20 +54,20 @@ pipeline {
         stage('Run Tests with Coverage') {
             steps {
                 sh '''
-                    # Run tests with coverage
+                    # Run tests and generate coverage report
                     go test -v -coverprofile=coverage.out -covermode=atomic ./...
                     
-                    # Generate JSON test report
-                    go test -json ./... > report.json
+                    # Generate JSON test report for Jenkins
+                    go test -json ./... > test-report.json
                     
-                    # Generate coverage HTML for debugging
+                    # Generate HTML coverage report
                     go tool cover -html=coverage.out -o coverage.html
                 '''
             }
             post {
                 always {
                     // Publish test results
-                    junit 'report.json'
+                    junit 'test-report.json'
                     
                     // Archive coverage report
                     archiveArtifacts artifacts: 'coverage.html', fingerprint: true
@@ -56,40 +75,32 @@ pipeline {
             }
         }
         
-        stage('Static Analysis') {
-            steps {
-                sh '''
-                    # Run go vet
-                    go vet ./...
-                    
-                    # Run staticcheck if installed
-                    # staticcheck ./...
-                    
-                    # Run golint if installed
-                    # golint ./...
-                '''
-            }
-        }
-        
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('SonarQube') {
-                    sh '''
-                        sonar-scanner \
-                          -Dsonar.projectKey=go-crud-app \
-                          -Dsonar.projectName="Go CRUD Application" \
-                          -Dsonar.sources=. \
-                          -Dsonar.exclusions="**/*_test.go,**/vendor/*" \
-                          -Dsonar.tests=. \
-                          -Dsonar.test.inclusions="**/*_test.go" \
-                          -Dsonar.go.coverage.reportPaths=coverage.out \
-                          -Dsonar.go.tests.reportPaths=report.json
-                    '''
+                script {
+                    // Get SonarQube scanner tool
+                    def scannerHome = tool 'SonarScanner'
+                    
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=${PROJECT_KEY} \
+                              -Dsonar.projectName="${PROJECT_NAME}" \
+                              -Dsonar.projectVersion=1.0.0 \
+                              -Dsonar.sources=. \
+                              -Dsonar.exclusions="**/*_test.go,**/vendor/*" \
+                              -Dsonar.tests=. \
+                              -Dsonar.test.inclusions="**/*_test.go" \
+                              -Dsonar.go.coverage.reportPaths=coverage.out \
+                              -Dsonar.go.tests.reportPaths=test-report.json \
+                              -Dsonar.sourceEncoding=UTF-8
+                        """
+                    }
                 }
             }
         }
         
-        stage('Quality Gate') {
+        stage('Wait for Quality Gate') {
             steps {
                 timeout(time: 1, unit: 'HOURS') {
                     waitForQualityGate abortPipeline: true
@@ -97,16 +108,19 @@ pipeline {
             }
         }
         
-        stage('Build') {
+        stage('Build Application') {
             steps {
                 sh '''
-                    # Build the application
-                    go build -o bin/go-crud-app .
+                    # Build the Go binary
+                    go build -o bin/test-sonarqube .
+                    
+                    # Verify build
+                    ls -la bin/
                 '''
             }
             post {
                 success {
-                    archiveArtifacts artifacts: 'bin/go-crud-app', fingerprint: true
+                    archiveArtifacts artifacts: 'bin/test-sonarqube', fingerprint: true
                 }
             }
         }
@@ -114,15 +128,16 @@ pipeline {
     
     post {
         always {
-            // Clean up
+            // Clean up workspace
             cleanWs()
         }
         success {
-            echo '✅ Pipeline passed! Check SonarQube dashboard for detailed analysis'
-            echo "View results: ${SONAR_HOST_URL}/dashboard?id=go-crud-app"
+            echo '✅ Pipeline completed successfully!'
+            echo "📊 View SonarQube results: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
         }
         failure {
-            echo '❌ Pipeline failed. Check SonarQube quality gate results.'
+            echo '❌ Pipeline failed. Please check the logs above.'
+            echo "🔍 Check SonarQube quality gate: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
         }
     }
 }
