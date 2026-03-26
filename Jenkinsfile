@@ -1,20 +1,15 @@
-// Jenkinsfile for Windows with gotestsum
 pipeline {
     agent any
     
     environment {
-        // SonarQube configuration
         SONAR_HOST_URL = 'http://localhost:9000'
-        
-        // Go environment for Windows
         GO111MODULE = 'on'
-        
-        // Project configuration
         PROJECT_KEY = 'test-sonarqube'
         PROJECT_NAME = 'Test SonarQube Go App'
         
-        // Add Go bin path for gotestsum
-        PATH = "${env.PATH};${env.GOPATH}\\bin"
+        // Set GOPATH for the build
+        GOPATH = "${WORKSPACE}\\go"
+        PATH = "${env.PATH};${GOPATH}\\bin"
     }
     
     stages {
@@ -25,13 +20,19 @@ pipeline {
             }
         }
         
-        stage('Setup Go Environment') {
+        stage('Setup Go and Tools') {
             steps {
                 script {
                     // Display Go version
                     bat 'go version'
                     
-                    // Verify gotestsum is installed
+                    // Create GOPATH directory
+                    bat 'mkdir %GOPATH%\\bin 2>nul || exit 0'
+                    
+                    // Install gotestsum
+                    bat 'go install gotest.tools/gotestsum@latest'
+                    
+                    // Verify installation
                     bat 'where gotestsum'
                 }
             }
@@ -43,7 +44,6 @@ pipeline {
                     echo "Downloading dependencies..."
                     go mod download
                     go mod verify
-                    echo "Dependencies downloaded successfully"
                 '''
             }
         }
@@ -53,18 +53,16 @@ pipeline {
                 bat '''
                     echo "Running tests with coverage..."
                     
-                    # Run tests with gotestsum and generate JUnit XML
-                    gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out -covermode=atomic ./...
+                    # Use gotestsum from GOPATH
+                    %GOPATH%\\bin\\gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out -covermode=atomic ./...
                     
                     echo "Generating HTML coverage report..."
                     go tool cover -html=coverage.out -o coverage.html
-                    
-                    echo "Tests completed successfully"
                 '''
             }
             post {
                 always {
-                    // Publish JUnit test results
+                    // Publish test results
                     junit 'test-report.xml'
                     
                     // Archive coverage report
@@ -76,7 +74,6 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 script {
-                    // Get SonarQube scanner tool
                     def scannerHome = tool 'SonarScanner'
                     
                     withSonarQubeEnv('SonarQube') {
@@ -113,10 +110,7 @@ pipeline {
                 bat '''
                     echo "Building application..."
                     go build -o bin\\test-sonarqube.exe .
-                    echo "Build completed successfully"
-                    
-                    echo "Build artifacts:"
-                    dir bin\\
+                    echo "Build completed"
                 '''
             }
             post {
@@ -129,7 +123,6 @@ pipeline {
     
     post {
         always {
-            // Clean up workspace
             cleanWs()
         }
         success {
@@ -137,8 +130,7 @@ pipeline {
             echo "📊 View SonarQube results: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
         }
         failure {
-            echo '❌ Pipeline failed. Please check the logs above.'
-            echo "🔍 Check SonarQube quality gate: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
+            echo '❌ Pipeline failed'
         }
     }
 }
