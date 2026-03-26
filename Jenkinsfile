@@ -2,8 +2,13 @@ pipeline {
     agent any
     
     environment {
+        // SonarQube configuration
         SONAR_HOST_URL = 'http://localhost:9000'
+        
+        // Go environment for Windows
         GO111MODULE = 'on'
+        
+        // Project configuration
         PROJECT_KEY = 'test-sonarqube'
         PROJECT_NAME = 'Test SonarQube Go App'
         
@@ -20,20 +25,20 @@ pipeline {
             }
         }
         
-        stage('Setup Go and Tools') {
+        stage('Setup Go Environment') {
             steps {
                 script {
                     // Display Go version
                     bat 'go version'
                     
                     // Create GOPATH directory
-                    bat 'mkdir %GOPATH%\\bin 2>nul || exit 0'
+                    bat 'if not exist %GOPATH%\\bin mkdir %GOPATH%\\bin'
                     
-                    // Install gotestsum
+                    // Install gotestsum for JUnit reports
                     bat 'go install gotest.tools/gotestsum@latest'
                     
-                    // Verify installation
-                    bat 'where gotestsum'
+                    // Verify gotestsum installed
+                    bat 'dir %GOPATH%\\bin\\gotestsum.exe'
                 }
             }
         }
@@ -44,6 +49,7 @@ pipeline {
                     echo "Downloading dependencies..."
                     go mod download
                     go mod verify
+                    echo "Dependencies downloaded successfully"
                 '''
             }
         }
@@ -53,17 +59,29 @@ pipeline {
                 bat '''
                     echo "Running tests with coverage..."
                     
-                    # Use gotestsum from GOPATH
-                    %GOPATH%\\bin\\gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out -covermode=atomic ./...
+                    # Run tests and generate coverage
+                    go test -v -coverprofile=coverage.out -covermode=atomic ./...
+                    
+                    # Generate JUnit XML report using gotestsum
+                    %GOPATH%\\bin\\gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out ./...
                     
                     echo "Generating HTML coverage report..."
                     go tool cover -html=coverage.out -o coverage.html
+                    
+                    echo "Tests completed successfully"
                 '''
             }
             post {
                 always {
-                    // Publish test results
-                    junit 'test-report.xml'
+                    // Publish test results if file exists
+                    script {
+                        if (fileExists('test-report.xml')) {
+                            junit 'test-report.xml'
+                            echo "✅ Test results published"
+                        } else {
+                            echo "⚠️ No test-report.xml found"
+                        }
+                    }
                     
                     // Archive coverage report
                     archiveArtifacts artifacts: 'coverage.html', fingerprint: true
@@ -74,7 +92,8 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 script {
-                    def scannerHome = tool 'SonarScanner'
+                    // Get SonarQube scanner tool with correct name
+                    def scannerHome = tool 'SonarQubeScanner'
                     
                     withSonarQubeEnv('SonarQube') {
                         bat """
@@ -88,7 +107,6 @@ pipeline {
                               -Dsonar.tests=. ^
                               -Dsonar.test.inclusions="**/*_test.go" ^
                               -Dsonar.go.coverage.reportPaths=coverage.out ^
-                              -Dsonar.go.tests.reportPaths=test-report.xml ^
                               -Dsonar.sourceEncoding=UTF-8
                             echo "SonarQube analysis completed"
                         """
@@ -110,7 +128,10 @@ pipeline {
                 bat '''
                     echo "Building application..."
                     go build -o bin\\test-sonarqube.exe .
-                    echo "Build completed"
+                    echo "Build completed successfully"
+                    
+                    echo "Build artifacts:"
+                    dir bin\\
                 '''
             }
             post {
@@ -123,6 +144,7 @@ pipeline {
     
     post {
         always {
+            // Clean up workspace
             cleanWs()
         }
         success {
@@ -130,7 +152,8 @@ pipeline {
             echo "📊 View SonarQube results: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
         }
         failure {
-            echo '❌ Pipeline failed'
+            echo '❌ Pipeline failed. Please check the logs above.'
+            echo "🔍 Check SonarQube quality gate: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
         }
     }
 }
