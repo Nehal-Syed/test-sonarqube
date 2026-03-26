@@ -1,4 +1,4 @@
-// Windows-compatible Jenkinsfile with proper JUnit reports
+// Jenkinsfile for Windows with gotestsum
 pipeline {
     agent any
     
@@ -12,6 +12,9 @@ pipeline {
         // Project configuration
         PROJECT_KEY = 'test-sonarqube'
         PROJECT_NAME = 'Test SonarQube Go App'
+        
+        // Add Go bin path for gotestsum
+        PATH = "${env.PATH};${env.GOPATH}\\bin"
     }
     
     stages {
@@ -25,19 +28,11 @@ pipeline {
         stage('Setup Go Environment') {
             steps {
                 script {
-                    // Check if Go is available on Windows
-                    def goCheck = bat(script: 'go version', returnStatus: true)
-                    if (goCheck != 0) {
-                        echo "❌ Go is not installed or not in PATH"
-                        echo "Please install Go from: https://golang.org/dl/"
-                        error "Go is required for this pipeline"
-                    }
-                    
                     // Display Go version
                     bat 'go version'
                     
-                    // Install gotestsum for JUnit reports
-                    bat 'go install github.com/gotestyourself/gotestsum@latest'
+                    // Verify gotestsum is installed
+                    bat 'where gotestsum'
                 }
             }
         }
@@ -58,7 +53,7 @@ pipeline {
                 bat '''
                     echo "Running tests with coverage..."
                     
-                    # Run tests with gotestsum to generate JUnit XML
+                    # Run tests with gotestsum and generate JUnit XML
                     gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out -covermode=atomic ./...
                     
                     echo "Generating HTML coverage report..."
@@ -69,7 +64,7 @@ pipeline {
             }
             post {
                 always {
-                    // Publish JUnit test results (XML format)
+                    // Publish JUnit test results
                     junit 'test-report.xml'
                     
                     // Archive coverage report
