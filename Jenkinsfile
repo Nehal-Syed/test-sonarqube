@@ -1,4 +1,4 @@
-// Complete Jenkinsfile for Go project with SonarQube analysis
+// Windows-compatible Jenkinsfile for Go project with SonarQube
 pipeline {
     agent any
     
@@ -6,7 +6,7 @@ pipeline {
         // SonarQube configuration
         SONAR_HOST_URL = 'http://localhost:9000'
         
-        // Go environment
+        // Go environment for Windows
         GO111MODULE = 'on'
         
         // Project configuration
@@ -25,43 +25,44 @@ pipeline {
         stage('Setup Go Environment') {
             steps {
                 script {
-                    // Check if Go is available, if not install it
-                    def goVersion = sh(script: 'go version', returnStatus: true)
-                    if (goVersion != 0) {
-                        echo "⚠️ Go not found. Installing Go..."
-                        sh '''
-                            # Download and install Go
-                            wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
-                            sudo tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz
-                            export PATH=$PATH:/usr/local/go/bin
-                            echo "export PATH=\$PATH:/usr/local/go/bin" >> ~/.bashrc
-                        '''
+                    // Check if Go is available on Windows
+                    def goCheck = bat(script: 'go version', returnStatus: true)
+                    if (goCheck != 0) {
+                        echo "❌ Go is not installed or not in PATH"
+                        echo "Please install Go from: https://golang.org/dl/"
+                        error "Go is required for this pipeline"
                     }
-                    sh 'go version'
+                    
+                    // Display Go version
+                    bat 'go version'
                 }
             }
         }
         
         stage('Download Dependencies') {
             steps {
-                sh '''
+                bat '''
+                    echo "Downloading dependencies..."
                     go mod download
                     go mod verify
+                    echo "Dependencies downloaded successfully"
                 '''
             }
         }
         
         stage('Run Tests with Coverage') {
             steps {
-                sh '''
-                    # Run tests and generate coverage report
+                bat '''
+                    echo "Running tests with coverage..."
                     go test -v -coverprofile=coverage.out -covermode=atomic ./...
                     
-                    # Generate JSON test report for Jenkins
+                    echo "Generating test reports..."
                     go test -json ./... > test-report.json
                     
-                    # Generate HTML coverage report
+                    echo "Generating HTML coverage report..."
                     go tool cover -html=coverage.out -o coverage.html
+                    
+                    echo "Tests completed successfully"
                 '''
             }
             post {
@@ -82,18 +83,20 @@ pipeline {
                     def scannerHome = tool 'SonarScanner'
                     
                     withSonarQubeEnv('SonarQube') {
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner \
-                              -Dsonar.projectKey=${PROJECT_KEY} \
-                              -Dsonar.projectName="${PROJECT_NAME}" \
-                              -Dsonar.projectVersion=1.0.0 \
-                              -Dsonar.sources=. \
-                              -Dsonar.exclusions="**/*_test.go,**/vendor/*" \
-                              -Dsonar.tests=. \
-                              -Dsonar.test.inclusions="**/*_test.go" \
-                              -Dsonar.go.coverage.reportPaths=coverage.out \
-                              -Dsonar.go.tests.reportPaths=test-report.json \
+                        bat """
+                            echo "Running SonarQube analysis..."
+                            ${scannerHome}\\bin\\sonar-scanner.bat ^
+                              -Dsonar.projectKey=${PROJECT_KEY} ^
+                              -Dsonar.projectName="${PROJECT_NAME}" ^
+                              -Dsonar.projectVersion=1.0.0 ^
+                              -Dsonar.sources=. ^
+                              -Dsonar.exclusions="**/*_test.go,**/vendor/*" ^
+                              -Dsonar.tests=. ^
+                              -Dsonar.test.inclusions="**/*_test.go" ^
+                              -Dsonar.go.coverage.reportPaths=coverage.out ^
+                              -Dsonar.go.tests.reportPaths=test-report.json ^
                               -Dsonar.sourceEncoding=UTF-8
+                            echo "SonarQube analysis completed"
                         """
                     }
                 }
@@ -110,17 +113,18 @@ pipeline {
         
         stage('Build Application') {
             steps {
-                sh '''
-                    # Build the Go binary
-                    go build -o bin/test-sonarqube .
+                bat '''
+                    echo "Building application..."
+                    go build -o bin\\test-sonarqube.exe .
+                    echo "Build completed successfully"
                     
-                    # Verify build
-                    ls -la bin/
+                    echo "Build artifacts:"
+                    dir bin\\
                 '''
             }
             post {
                 success {
-                    archiveArtifacts artifacts: 'bin/test-sonarqube', fingerprint: true
+                    archiveArtifacts artifacts: 'bin/test-sonarqube.exe', fingerprint: true
                 }
             }
         }
