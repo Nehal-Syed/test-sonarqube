@@ -1,4 +1,4 @@
-// Windows-compatible Jenkinsfile for Go project with SonarQube
+// Windows-compatible Jenkinsfile with proper JUnit reports
 pipeline {
     agent any
     
@@ -35,6 +35,9 @@ pipeline {
                     
                     // Display Go version
                     bat 'go version'
+                    
+                    // Install gotestsum for JUnit reports
+                    bat 'go install github.com/gotestyourself/gotestsum@latest'
                 }
             }
         }
@@ -54,10 +57,9 @@ pipeline {
             steps {
                 bat '''
                     echo "Running tests with coverage..."
-                    go test -v -coverprofile=coverage.out -covermode=atomic ./...
                     
-                    echo "Generating test reports..."
-                    go test -json ./... > test-report.json
+                    # Run tests with gotestsum to generate JUnit XML
+                    gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out -covermode=atomic ./...
                     
                     echo "Generating HTML coverage report..."
                     go tool cover -html=coverage.out -o coverage.html
@@ -67,8 +69,8 @@ pipeline {
             }
             post {
                 always {
-                    // Publish test results
-                    junit 'test-report.json'
+                    // Publish JUnit test results (XML format)
+                    junit 'test-report.xml'
                     
                     // Archive coverage report
                     archiveArtifacts artifacts: 'coverage.html', fingerprint: true
@@ -94,7 +96,7 @@ pipeline {
                               -Dsonar.tests=. ^
                               -Dsonar.test.inclusions="**/*_test.go" ^
                               -Dsonar.go.coverage.reportPaths=coverage.out ^
-                              -Dsonar.go.tests.reportPaths=test-report.json ^
+                              -Dsonar.go.tests.reportPaths=test-report.xml ^
                               -Dsonar.sourceEncoding=UTF-8
                             echo "SonarQube analysis completed"
                         """
