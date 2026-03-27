@@ -6,7 +6,7 @@ pipeline {
         SONAR_HOST_URL = 'http://host.docker.internal:9000'  // Use this for Docker on Windows
         // SONAR_HOST_URL = 'http://localhost:9000'  // Use this if SonarQube is on host
         
-        // Global Analysis Token from SonarQube (starts with squ_)
+        // Global Analysis Token from SonarQube (starts with squ_ or sqa_)
         SONAR_TOKEN = credentials('sonarqube-global-token')
         
         // Go environment for Windows
