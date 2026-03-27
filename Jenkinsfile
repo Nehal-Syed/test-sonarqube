@@ -3,7 +3,11 @@ pipeline {
     
     environment {
         // SonarQube configuration
-        SONAR_HOST_URL = 'http://localhost:9000'
+        SONAR_HOST_URL = 'http://host.docker.internal:9000'  // Use this for Docker on Windows
+        // SONAR_HOST_URL = 'http://localhost:9000'  // Use this if SonarQube is on host
+        
+        // Global Analysis Token from SonarQube (starts with squ_)
+        SONAR_TOKEN = credentials('sonarqube-global-token')
         
         // Go environment for Windows
         GO111MODULE = 'on'
@@ -85,39 +89,40 @@ pipeline {
                     
                     // Archive coverage report
                     archiveArtifacts artifacts: 'coverage.html', fingerprint: true
+                    archiveArtifacts artifacts: 'coverage.out', fingerprint: true
                 }
             }
         }
         
-        stage('SonarQube Analysis') {
+        stage('SonarQube Analysis with Docker') {
             steps {
                 script {
-                    // Get SonarQube scanner tool with correct name
-                    def scannerHome = tool 'SonarQubeScanner'
-                    
-                    withSonarQubeEnv('SonarQube') {
-                        bat """
-                            echo "Running SonarQube analysis..."
-                            ${scannerHome}\\bin\\sonar-scanner.bat ^
-                              -Dsonar.projectKey=${PROJECT_KEY} ^
-                              -Dsonar.projectName="${PROJECT_NAME}" ^
-                              -Dsonar.projectVersion=1.0.0 ^
-                              -Dsonar.sources=. ^
-                              -Dsonar.exclusions="**/*_test.go,**/vendor/*" ^
-                              -Dsonar.tests=. ^
-                              -Dsonar.test.inclusions="**/*_test.go" ^
-                              -Dsonar.go.coverage.reportPaths=coverage.out ^
-                              -Dsonar.sourceEncoding=UTF-8
-                            echo "SonarQube analysis completed"
-                        """
-                    }
+                    // Use Docker to run SonarScanner with Global Token
+                    bat """
+                        echo "Running SonarQube analysis with Docker..."
+                        docker run --rm ^
+                          -e SONAR_HOST_URL="${SONAR_HOST_URL}" ^
+                          -e SONAR_TOKEN=${SONAR_TOKEN} ^
+                          -v "%CD%:/usr/src" ^
+                          sonarsource/sonar-scanner-cli ^
+                          "-Dsonar.projectKey=${PROJECT_KEY}" ^
+                          "-Dsonar.projectName=${PROJECT_NAME}" ^
+                          "-Dsonar.projectVersion=1.0.0" ^
+                          "-Dsonar.sources=." ^
+                          "-Dsonar.exclusions=**/*_test.go,**/vendor/*" ^
+                          "-Dsonar.tests=." ^
+                          "-Dsonar.test.inclusions=**/*_test.go" ^
+                          "-Dsonar.go.coverage.reportPaths=coverage.out" ^
+                          "-Dsonar.sourceEncoding=UTF-8"
+                        echo "✅ SonarQube analysis completed"
+                    """
                 }
             }
         }
         
         stage('Wait for Quality Gate') {
             steps {
-                timeout(time: 1, unit: 'HOURS') {
+                timeout(time: 10, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
