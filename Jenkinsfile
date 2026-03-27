@@ -115,24 +115,27 @@ pipeline {
                         error "coverage.out not found! Cannot run SonarQube analysis."
                     }
                     
-                    bat """
-                        echo "Running SonarQube analysis with Docker..."
-                        docker run --rm ^
-                          -e SONAR_HOST_URL="${SONAR_HOST_URL}" ^
-                          -e SONAR_TOKEN=${SONAR_TOKEN} ^
-                          -v "${WORKSPACE}:/usr/src" ^
-                          sonarsource/sonar-scanner-cli ^
-                          "-Dsonar.projectKey=${PROJECT_KEY}" ^
-                          "-Dsonar.projectName=${PROJECT_NAME}" ^
-                          "-Dsonar.projectVersion=1.0.0" ^
-                          "-Dsonar.sources=." ^
-                          "-Dsonar.exclusions=**/*_test.go,**/vendor/*" ^
-                          "-Dsonar.tests=./test" ^
-                          "-Dsonar.test.inclusions=**/*_test.go" ^
-                          "-Dsonar.go.coverage.reportPaths=coverage.out" ^
-                          "-Dsonar.sourceEncoding=UTF-8"
-                        echo "✅ SonarQube analysis completed"
-                    """
+                    // IMPORTANT: Wrap Docker command in withSonarQubeEnv
+                    withSonarQubeEnv('SonarQube') {
+                        bat """
+                            echo "Running SonarQube analysis with Docker..."
+                            docker run --rm ^
+                              -e SONAR_HOST_URL="${SONAR_HOST_URL}" ^
+                              -e SONAR_TOKEN=${SONAR_TOKEN} ^
+                              -v "${WORKSPACE}:/usr/src" ^
+                              sonarsource/sonar-scanner-cli ^
+                              "-Dsonar.projectKey=${PROJECT_KEY}" ^
+                              "-Dsonar.projectName=${PROJECT_NAME}" ^
+                              "-Dsonar.projectVersion=1.0.0" ^
+                              "-Dsonar.sources=." ^
+                              "-Dsonar.exclusions=**/*_test.go,**/vendor/*" ^
+                              "-Dsonar.tests=./test" ^
+                              "-Dsonar.test.inclusions=**/*_test.go" ^
+                              "-Dsonar.go.coverage.reportPaths=coverage.out" ^
+                              "-Dsonar.sourceEncoding=UTF-8"
+                            echo "✅ SonarQube analysis completed"
+                        """
+                    }
                 }
             }
         }
@@ -140,6 +143,7 @@ pipeline {
         stage('Wait for Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
+                    // This will now work because we used withSonarQubeEnv above
                     waitForQualityGate abortPipeline: true
                 }
                 echo "✅ Quality gate passed"
