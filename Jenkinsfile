@@ -3,20 +3,20 @@ pipeline {
     
     environment {
         // SonarQube configuration
-        SONAR_HOST_URL = 'http://host.docker.internal:9000'  // Use this for Docker on Windows
-        // SONAR_HOST_URL = 'http://localhost:9000'  // Use this if SonarQube is on host
+        SONAR_HOST_URL = 'http://host.docker.internal:9000'  // For Docker on Windows
         
-        // Global Analysis Token from SonarQube (starts with squ_ or sqa_)
+        // Your SonarQube token from Jenkins credentials
         SONAR_TOKEN = credentials('sonarqube-global-token')
         
-        // Go environment for Windows
+        // Go environment
         GO111MODULE = 'on'
         
         // Project configuration
         PROJECT_KEY = 'test-sonarqube'
         PROJECT_NAME = 'Test SonarQube Go App'
         
-        // Set GOPATH for the build
+        // Use workspace-specific cache to avoid file lock issues
+        GOCACHE = "${WORKSPACE}\\gocache"
         GOPATH = "${WORKSPACE}\\go"
         PATH = "${env.PATH};${GOPATH}\\bin"
     }
@@ -24,8 +24,14 @@ pipeline {
     stages {
         stage('SCM Checkout') {
             steps {
+                // Clean workspace before checkout to prevent file lock issues
+                cleanWs()
                 checkout scm
-                echo "✅ Code checked out successfully"
+                echo "✅ Code checked out to: ${WORKSPACE}"
+                
+                // Verify project structure
+                bat 'echo "Project files:" && dir'
+                bat 'echo "Test folder:" && if exist test dir test'
             }
         }
         
@@ -35,14 +41,13 @@ pipeline {
                     // Display Go version
                     bat 'go version'
                     
-                    // Create GOPATH directory
+                    // Create necessary directories
+                    bat 'if not exist %GOCACHE% mkdir %GOCACHE%'
                     bat 'if not exist %GOPATH%\\bin mkdir %GOPATH%\\bin'
                     
-                    // Install gotestsum for JUnit reports
+                    // Install gotestsum (optional, for JUnit reports)
                     bat 'go install gotest.tools/gotestsum@latest'
-                    
-                    // Verify gotestsum installed
-                    bat 'dir %GOPATH%\\bin\\gotestsum.exe'
+                    echo "✅ Go environment configured"
                 }
             }
         }
@@ -53,7 +58,7 @@ pipeline {
                     echo "Downloading dependencies..."
                     go mod download
                     go mod verify
-                    echo "Dependencies downloaded successfully"
+                    echo "✅ Dependencies downloaded"
                 '''
             }
         }
@@ -63,54 +68,66 @@ pipeline {
                 bat '''
                     echo "Running tests with coverage..."
                     
-                    # Run tests and generate coverage
+                    # Run all tests and generate coverage
                     go test -v -coverprofile=coverage.out -covermode=atomic ./...
                     
-                    # Generate JUnit XML report using gotestsum
-                    %GOPATH%\\bin\\gotestsum --junitfile test-report.xml -- -v -coverprofile=coverage.out ./...
+                    # Check if coverage.out was generated
+                    if exist coverage.out (
+                        echo "✅ coverage.out generated"
+                        go tool cover -func=coverage.out | findstr total
+                    ) else (
+                        echo "❌ coverage.out NOT generated"
+                        exit 1
+                    )
                     
                     echo "Generating HTML coverage report..."
                     go tool cover -html=coverage.out -o coverage.html
                     
-                    echo "Tests completed successfully"
+                    echo "✅ Tests completed successfully"
                 '''
             }
             post {
                 always {
-                    // Publish test results if file exists
                     script {
+                        // Publish JUnit test results if available
                         if (fileExists('test-report.xml')) {
                             junit 'test-report.xml'
                             echo "✅ Test results published"
-                        } else {
-                            echo "⚠️ No test-report.xml found"
+                        }
+                        
+                        // Archive coverage reports
+                        if (fileExists('coverage.out')) {
+                            archiveArtifacts artifacts: 'coverage.out', fingerprint: true
+                        }
+                        if (fileExists('coverage.html')) {
+                            archiveArtifacts artifacts: 'coverage.html', fingerprint: true
                         }
                     }
-                    
-                    // Archive coverage report
-                    archiveArtifacts artifacts: 'coverage.html', fingerprint: true
-                    archiveArtifacts artifacts: 'coverage.out', fingerprint: true
                 }
             }
         }
         
-        stage('SonarQube Analysis with Docker') {
+        stage('SonarQube Analysis') {
             steps {
                 script {
-                    // Use Docker to run SonarScanner with Global Token
+                    // Ensure coverage.out exists before running SonarQube
+                    if (!fileExists('coverage.out')) {
+                        error "coverage.out not found! Cannot run SonarQube analysis."
+                    }
+                    
                     bat """
                         echo "Running SonarQube analysis with Docker..."
                         docker run --rm ^
                           -e SONAR_HOST_URL="${SONAR_HOST_URL}" ^
                           -e SONAR_TOKEN=${SONAR_TOKEN} ^
-                          -v "%CD%:/usr/src" ^
+                          -v "${WORKSPACE}:/usr/src" ^
                           sonarsource/sonar-scanner-cli ^
                           "-Dsonar.projectKey=${PROJECT_KEY}" ^
                           "-Dsonar.projectName=${PROJECT_NAME}" ^
                           "-Dsonar.projectVersion=1.0.0" ^
                           "-Dsonar.sources=." ^
                           "-Dsonar.exclusions=**/*_test.go,**/vendor/*" ^
-                          "-Dsonar.tests=." ^
+                          "-Dsonar.tests=./test" ^
                           "-Dsonar.test.inclusions=**/*_test.go" ^
                           "-Dsonar.go.coverage.reportPaths=coverage.out" ^
                           "-Dsonar.sourceEncoding=UTF-8"
@@ -125,6 +142,7 @@ pipeline {
                 timeout(time: 10, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
+                echo "✅ Quality gate passed"
             }
         }
         
@@ -133,10 +151,7 @@ pipeline {
                 bat '''
                     echo "Building application..."
                     go build -o bin\\test-sonarqube.exe .
-                    echo "Build completed successfully"
-                    
-                    echo "Build artifacts:"
-                    dir bin\\
+                    echo "✅ Build completed"
                 '''
             }
             post {
@@ -149,8 +164,9 @@ pipeline {
     
     post {
         always {
-            // Clean up workspace
+            // Clean up workspace to prevent file lock issues
             cleanWs()
+            echo "🧹 Workspace cleaned"
         }
         success {
             echo '✅ Pipeline completed successfully!'
@@ -159,6 +175,7 @@ pipeline {
         failure {
             echo '❌ Pipeline failed. Please check the logs above.'
             echo "🔍 Check SonarQube quality gate: ${SONAR_HOST_URL}/dashboard?id=${PROJECT_KEY}"
+            currentBuild.result = 'FAILURE'
         }
     }
 }
